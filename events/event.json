@@ -1,0 +1,12 @@
+{
+  "version": "0",
+  "id": "608d7ceb-0671-2677-ac76-6a6c2b45c045",
+  "detail-type": "EventBridge",
+  "source": "aws.events",
+  "account": "123456789012",
+  "time": "2020-03-15T14:44:00Z",
+  "region": "us-east-1",
+  "resources": ["arn:aws:events:us-east-1:123456789012:rule/my-schedule"],
+  "detail": {},
+  "body":"{\"publicationId\":\"1\"}"
+}
