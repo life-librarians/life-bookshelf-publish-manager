@@ -1,87 +1,134 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import mariadb from 'mariadb';
-// import { databaseConfig } from './config';
-// import { policyConfig } from './config';
-// import { discordConfig } from './config';
+import { databaseConfig } from './config';
+import { discordConfig } from './config';
 import { notionConfig } from './config';
-import { Webhook, MessageBuilder } from 'discord-webhook-node';
 import { Client } from '@notionhq/client';
+import { Webhook, MessageBuilder } from 'discord-webhook-node';
+import { BookChapter, NotionDatabaseProperties, PublishStatus } from './types';
+import { getBookChaptersAndContents, getMemberBookPublicationDetails } from './query';
 
-export const lambdaHandler = async (_: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  // const pool = mariadb.createPool(databaseConfig);
-  // const webhook = new Webhook(discordConfig.webhookUrl as string);
-  // let connection;
+function formatBookDetails(chapters: BookChapter[]): string {
+  let resultString = 'Book Details:\n';
+
+  chapters.forEach((chapter) => {
+    resultString += `\nChapter ${chapter.chapterNumber}: ${chapter.chapterName}\n`;
+    chapter.contents.forEach((content) => {
+      resultString += `  Page ${content.pageNumber}: ${content.pageContent}\n`;
+    });
+  });
+
+  return resultString;
+}
+
+function publishStatusToKorean(status: PublishStatus): string {
+  switch (status) {
+    case PublishStatus.REQUESTED:
+      return '새 요청';
+    case PublishStatus.REQUEST_CONFIRMED:
+      return '요청 처리중';
+    case PublishStatus.IN_PUBLISHING:
+      return '출판 중';
+    case PublishStatus.PUBLISHED:
+      return '출판 완료';
+    case PublishStatus.REJECTED:
+      return '출판 반려';
+  }
+}
+
+export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
+  console.log('event:', event.body);
+  const requestBody = JSON.parse(event.body as string);
+  console.log(requestBody);
+  const pool = mariadb.createPool(databaseConfig);
+  let connection: mariadb.PoolConnection | null = null;
   try {
     const notion = new Client({ auth: notionConfig.apiKey });
     const databaseId = notionConfig.databaseId;
 
-    const response = await notion.databases.query({
-      database_id: databaseId,
-      // sorts: [
-      //     {
-      //         property: '출판 요청일',
-      //         direction: 'descending',
-      //     },
-      // ],
+    connection = await pool.getConnection();
+
+    const memberBookPublicationDetail = await getMemberBookPublicationDetails(
+      connection,
+      requestBody.publicationId as number,
+    );
+
+    console.log(memberBookPublicationDetail);
+
+    const bookChaptersAndContents = await getBookChaptersAndContents(connection, memberBookPublicationDetail.bookId);
+    const formattedBookDetails = formatBookDetails(bookChaptersAndContents);
+
+    console.log(formattedBookDetails);
+
+    const properties: Partial<NotionDatabaseProperties> = {};
+    properties['출판 ID'] = { number: memberBookPublicationDetail.publicationId };
+    properties.고객명 = { title: [{ text: { content: memberBookPublicationDetail.memberName } }] };
+    properties['고객 이메일'] = { email: memberBookPublicationDetail.memberEmail };
+    properties['책 제목'] = { rich_text: [{ text: { content: memberBookPublicationDetail.bookTitle } }] };
+    properties['페이지 수'] = { number: memberBookPublicationDetail.bookPageCount };
+    properties['책 커버 이미지 주소'] = { url: memberBookPublicationDetail.bookCoverImageUrl };
+    properties['가격(원)'] = { number: memberBookPublicationDetail.publicationPrice };
+    properties['출판 요청일'] = {
+      date: { start: memberBookPublicationDetail.publicationRequestedAt.toISOString() },
+    };
+    properties['예상 출판일'] = { date: { start: memberBookPublicationDetail.willPublishedAt.toISOString() } };
+    properties['출판 상태'] = {
+      select: { name: publishStatusToKorean(memberBookPublicationDetail.publishStatus) },
+    };
+
+    const response = await notion.pages.create({
+      parent: {
+        database_id: databaseId,
+      },
+      properties,
+      children: [
+        {
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [
+              {
+                text: {
+                  content: formattedBookDetails,
+                },
+              },
+            ],
+          },
+        },
+      ],
     });
 
-    // console.log(response.results);
+    response.id;
 
-    const results = response.results;
-    for (const result of results) {
-      console.log(result);
-      // @ts-ignore
-      const properties = result.properties;
-      const name = properties['고객명']['title'][0]['text']['content'];
-      const title = properties['책 제목']['rich_text'][0]['text']['content'];
-      const publishStatus = properties['출판 상태']['select']['name'];
-      const willPublish = properties['예상 출판일']['date']['start'];
-      const requestedAt = properties['출판 요청일']['date']['start'];
-      const publishedAt = properties['출판일']['date']['start'];
-      const pageCount = properties['페이지 수']['number'];
+    const webhook = new Webhook(discordConfig.webhookUrl as string);
 
-      console.log('고객명: ', name);
-      console.log('책 제목: ', title);
-      console.log('출판 상태: ', publishStatus);
-      console.log('예상 출판일: ', willPublish);
-      console.log('출판 요청일: ', requestedAt);
-      console.log('출판일: ', publishedAt);
-      console.log('페이지 수: ', pageCount);
-    }
+    const message = new MessageBuilder()
+      .setTitle('새 출판 요청이 처리되었습니다')
+      .setDescription(`Publication ID: ${memberBookPublicationDetail.publicationId}`)
+      .addField('Book Title', memberBookPublicationDetail.bookTitle)
+      .addField('Member Name', memberBookPublicationDetail.memberName)
+      .addField('Member Email', memberBookPublicationDetail.memberEmail)
+      .addField('Publication Status', publishStatusToKorean(memberBookPublicationDetail.publishStatus))
+      .addField('Published At', memberBookPublicationDetail.publishedAt?.toISOString() || 'N/A')
+      .setColor(0)
+      .setTimestamp();
 
-    //     connection = await pool.getConnection();
-    //     const membersToDelete = await connection.query(`
-    //         SELECT * FROM member WHERE deleted_at IS NOT NULL AND deleted_at < DATE_SUB(NOW(), INTERVAL ${policyConfig.cleanupInterval} DAY)
-    //     `);
-    //     for (const member of membersToDelete) {
-    //         try {
-    //             await connection.commit();
-    //         } catch (error) {
-    //             console.error(error);
-    //             console.error(`Failed to delete member: ${member}`);
-    //             // Discord webhook으로 에러 알림
-    //             const embed = new MessageBuilder()
-    //                 .setTitle('[회원 삭제 스케줄러] 회원 영구 삭제 실패')
-    //                 .setDescription('회원 영구 삭제 중 오류가 발생했습니다.')
-    //                 .addField('대상 회원', JSON.stringify(member))
-    //                 .addField('에러 메시지', error instanceof Error ? error.message : JSON.stringify(error))
-    //                 .setTimestamp();
-    //             await webhook.send(embed);
-    //         } finally {
-    //         }
-    //     }
+    await webhook.send(message);
+
     return {
       statusCode: 200,
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        message: `Publication processed successfully: ${memberBookPublicationDetail.publicationId}`,
+      }),
     };
   } catch (error) {
     console.error('Error:', error);
-    //     if (connection) await connection.rollback();
+    if (connection) await connection.rollback();
     return {
       statusCode: 500,
-      body: JSON.stringify({ message: 'Failed to delete members and their related data' }),
+      body: JSON.stringify({ message: 'Internal Server Error' }),
     };
   } finally {
-    // if (connection) await connection.end();
+    if (connection) await connection.end();
   }
 };
