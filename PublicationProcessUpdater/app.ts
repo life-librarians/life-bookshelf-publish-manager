@@ -5,21 +5,8 @@ import { discordConfig } from './config';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
-import { BookChapter, NotionDatabaseProperties, PublishStatus } from './types';
-import { getBookChaptersAndContents, getMemberBookPublicationDetails } from './query';
-
-function formatBookDetails(chapters: BookChapter[]): string {
-  let resultString = 'Book Details:\n';
-
-  chapters.forEach((chapter) => {
-    resultString += `\nChapter ${chapter.chapterNumber}: ${chapter.chapterName}\n`;
-    chapter.contents.forEach((content) => {
-      resultString += `  Page ${content.pageNumber}: ${content.pageContent}\n`;
-    });
-  });
-
-  return resultString;
-}
+import { PublishStatus, UpdatePublication } from './types';
+import { getAllMemberBookPublicationDetails, queryNotionDatabase, updatePublication } from './query';
 
 function publishStatusToKorean(status: PublishStatus): string {
   switch (status) {
@@ -40,89 +27,53 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
   let connection: mariadb.PoolConnection | null = null;
 
   try {
-    console.log('Full event:', JSON.stringify(event, null, 2));
-    let requestBody;
-    if (typeof event.body === 'string') {
-      try {
-        requestBody = JSON.parse(event.body);
-      } catch (parseError) {
-        console.error('Error parsing event.body:', parseError);
-        requestBody = event.body; // 파싱 실패 시 원본 문자열 사용
-      }
-    } else if (typeof event.body === 'object') {
-      requestBody = event.body; // 이미 객체인 경우 그대로 사용
-    } else {
-      throw new Error('Unexpected event.body type');
-    }
-
     const pool = mariadb.createPool(databaseConfig);
-    const notion = new Client({ auth: notionConfig.apiKey });
-    const databaseId = notionConfig.databaseId;
-
     connection = await pool.getConnection();
 
-    const memberBookPublicationDetail = await getMemberBookPublicationDetails(
-      connection,
-      requestBody.publicationId as number,
-    );
+    const memberBookPublicationDetails = await getAllMemberBookPublicationDetails(connection);
 
-    console.log(memberBookPublicationDetail);
+    const notion = new Client({ auth: notionConfig.apiKey });
+    const notionMemberBookPublicationDetails = await queryNotionDatabase(notion);
 
-    const bookChaptersAndContents = await getBookChaptersAndContents(connection, memberBookPublicationDetail.bookId);
-    const formattedBookDetails = formatBookDetails(bookChaptersAndContents);
+    const newPublications: UpdatePublication[] = [];
 
-    console.log(formattedBookDetails);
+    for (const notionPublication of notionMemberBookPublicationDetails) {
+      const publication = memberBookPublicationDetails.find(
+        (publication) => publication.publicationId === notionPublication.publicationId,
+      );
+      if (publication) {
+        if (
+          publication.publishStatus !== notionPublication.publishStatus ||
+          publication.publishedAt !== notionPublication.publishedAt
+        ) {
+          const newPublication: UpdatePublication = {
+            publicationId: notionPublication.publicationId,
+            newPublishStatus: notionPublication.publishStatus,
+            newPublishedAt: notionPublication.publishedAt,
+            previousPublishStatus: publication.publishStatus,
+            previousPublishedAt: publication.publishedAt,
+          };
+          newPublications.push(newPublication);
 
-    const properties: Partial<NotionDatabaseProperties> = {};
-    properties['출판 ID'] = { number: memberBookPublicationDetail.publicationId };
-    properties.고객명 = { title: [{ text: { content: memberBookPublicationDetail.memberName } }] };
-    properties['고객 이메일'] = { email: memberBookPublicationDetail.memberEmail };
-    properties['책 제목'] = { rich_text: [{ text: { content: memberBookPublicationDetail.bookTitle } }] };
-    properties['페이지 수'] = { number: memberBookPublicationDetail.bookPageCount };
-    properties['책 커버 이미지 주소'] = { url: memberBookPublicationDetail.bookCoverImageUrl };
-    properties['가격(원)'] = { number: memberBookPublicationDetail.publicationPrice };
-    properties['출판 요청일'] = {
-      date: { start: memberBookPublicationDetail.publicationRequestedAt.toISOString() },
-    };
-    properties['예상 출판일'] = { date: { start: memberBookPublicationDetail.willPublishedAt.toISOString() } };
-    properties['출판 상태'] = {
-      select: { name: publishStatusToKorean(memberBookPublicationDetail.publishStatus) },
-    };
-
-    const response = await notion.pages.create({
-      parent: {
-        database_id: databaseId,
-      },
-      properties,
-      children: [
-        {
-          object: 'block',
-          type: 'paragraph',
-          paragraph: {
-            rich_text: [
-              {
-                text: {
-                  content: formattedBookDetails,
-                },
-              },
-            ],
-          },
-        },
-      ],
-    });
-
-    response.id;
+          await updatePublication(connection, newPublication);
+          console.log(`Updated publication [${JSON.stringify(newPublication)}]`);
+        }
+      }
+    }
+    if (newPublications.length === 0) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ message: 'No publications to update' }),
+      };
+    }
 
     const webhook = new Webhook(discordConfig.webhookUrl as string);
 
     const message = new MessageBuilder()
-      .setTitle('새 출판 요청이 처리되었습니다')
-      .setDescription(`Publication ID: ${memberBookPublicationDetail.publicationId}`)
-      .addField('Book Title', memberBookPublicationDetail.bookTitle)
-      .addField('Member Name', memberBookPublicationDetail.memberName)
-      .addField('Member Email', memberBookPublicationDetail.memberEmail)
-      .addField('Publication Status', publishStatusToKorean(memberBookPublicationDetail.publishStatus))
-      .addField('Published At', memberBookPublicationDetail.publishedAt?.toISOString() || 'N/A')
+      .setTitle('노션 데이터베이스 변경이 반영되었습니다')
+      .setDescription(`총 ${newPublications.length}개의 출판물이 처리되었습니다.`)
+      .addField('총 출판물 수', `${notionMemberBookPublicationDetails.length}개`)
+      .addField('변경된 출판물', '```' + JSON.stringify(newPublications, null, 2) + '```')
       .setColor(0)
       .setTimestamp();
 
@@ -131,7 +82,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: `Publication processed successfully: ${memberBookPublicationDetail.publicationId}`,
+        message: `Successfully updated [${newPublications.length}] publications`,
       }),
     };
   } catch (error) {
