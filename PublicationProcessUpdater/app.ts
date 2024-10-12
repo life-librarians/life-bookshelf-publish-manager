@@ -5,23 +5,8 @@ import { discordConfig } from './config';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
-import { PublishStatus, UpdatePublication } from './types';
+import { UpdatePublication } from './types';
 import { getAllMemberBookPublicationDetails, queryNotionDatabase, updatePublication } from './query';
-
-function publishStatusToKorean(status: PublishStatus): string {
-  switch (status) {
-    case PublishStatus.REQUESTED:
-      return '새 요청';
-    case PublishStatus.REQUEST_CONFIRMED:
-      return '요청 처리중';
-    case PublishStatus.IN_PUBLISHING:
-      return '출판 중';
-    case PublishStatus.PUBLISHED:
-      return '출판 완료';
-    case PublishStatus.REJECTED:
-      return '출판 반려';
-  }
-}
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   let connection: mariadb.PoolConnection | null = null;
@@ -61,6 +46,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       }
     }
     if (newPublications.length === 0) {
+      console.log('No publications to update');
       return {
         statusCode: 200,
         body: JSON.stringify({ message: 'No publications to update' }),
