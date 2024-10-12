@@ -5,8 +5,8 @@ import { discordConfig } from './config';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
-import { getBookChaptersAndContents, getMemberBookPublicationDetails } from './query';
 import { BookChapter, NotionDatabaseProperties, PublishStatus } from './types';
+import { getBookChaptersAndContents, getMemberBookPublicationDetails } from './query';
 
 function formatBookDetails(chapters: BookChapter[]): string {
   let resultString = 'Book Details:\n';
@@ -37,12 +37,25 @@ function publishStatusToKorean(status: PublishStatus): string {
 }
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  console.log('event:', event.body);
-  const requestBody = JSON.parse(event.body as string);
-  console.log(requestBody);
-  const pool = mariadb.createPool(databaseConfig);
   let connection: mariadb.PoolConnection | null = null;
+
   try {
+    console.log('Full event:', JSON.stringify(event, null, 2));
+    let requestBody;
+    if (typeof event.body === 'string') {
+      try {
+        requestBody = JSON.parse(event.body);
+      } catch (parseError) {
+        console.error('Error parsing event.body:', parseError);
+        requestBody = event.body; // 파싱 실패 시 원본 문자열 사용
+      }
+    } else if (typeof event.body === 'object') {
+      requestBody = event.body; // 이미 객체인 경우 그대로 사용
+    } else {
+      throw new Error('Unexpected event.body type');
+    }
+
+    const pool = mariadb.createPool(databaseConfig);
     const notion = new Client({ auth: notionConfig.apiKey });
     const databaseId = notionConfig.databaseId;
 

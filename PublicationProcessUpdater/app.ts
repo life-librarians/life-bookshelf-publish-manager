@@ -40,9 +40,21 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
   let connection: mariadb.PoolConnection | null = null;
 
   try {
-    console.log('event:', event.body);
-    const requestBody = JSON.parse(event.body as string);
-    console.log(requestBody);
+    console.log('Full event:', JSON.stringify(event, null, 2));
+    let requestBody;
+    if (typeof event.body === 'string') {
+      try {
+        requestBody = JSON.parse(event.body);
+      } catch (parseError) {
+        console.error('Error parsing event.body:', parseError);
+        requestBody = event.body; // 파싱 실패 시 원본 문자열 사용
+      }
+    } else if (typeof event.body === 'object') {
+      requestBody = event.body; // 이미 객체인 경우 그대로 사용
+    } else {
+      throw new Error('Unexpected event.body type');
+    }
+
     const pool = mariadb.createPool(databaseConfig);
     const notion = new Client({ auth: notionConfig.apiKey });
     const databaseId = notionConfig.databaseId;
