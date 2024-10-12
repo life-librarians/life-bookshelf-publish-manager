@@ -37,12 +37,13 @@ function publishStatusToKorean(status: PublishStatus): string {
 }
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  console.log('event:', event.body);
-  const requestBody = JSON.parse(event.body as string);
-  console.log(requestBody);
-  const pool = mariadb.createPool(databaseConfig);
   let connection: mariadb.PoolConnection | null = null;
+
   try {
+    console.log('event:', event.body);
+    const requestBody = JSON.parse(event.body as string);
+    console.log(requestBody);
+    const pool = mariadb.createPool(databaseConfig);
     const notion = new Client({ auth: notionConfig.apiKey });
     const databaseId = notionConfig.databaseId;
 
