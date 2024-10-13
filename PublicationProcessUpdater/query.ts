@@ -52,28 +52,48 @@ export async function getAllMemberBookPublicationDetails(
   return memberBookPublications;
 }
 
-export async function updatePublication(
+export async function updatePublications(
   connection: mariadb.PoolConnection,
-  updatePublication: UpdatePublication,
+  updates: UpdatePublication[],
 ): Promise<void> {
   try {
-    const query = `
+    let query = `
       UPDATE
           lifebookshelf.publications
       SET
-          publish_status = ?,
-          published_at = ?
-      WHERE
-          id = ?
-  `;
+    `;
 
-    await connection.query(query, [
-      updatePublication.newPublishStatus,
-      updatePublication.newPublishedAt?.toISOString(),
-      updatePublication.publicationId,
-    ]);
+    const cases: string[] = [];
+    const values: any[] = [];
+    const ids: number[] = [];
+
+    updates.forEach((update) => {
+      ids.push(update.publicationId);
+
+      if (update.newPublishStatus !== undefined) {
+        cases.push(`publish_status = CASE id WHEN ${update.publicationId} THEN ? ELSE publish_status END`);
+        values.push(update.newPublishStatus);
+      }
+
+      if (update.newPublishedAt !== undefined) {
+        cases.push(`published_at = CASE id WHEN ${update.publicationId} THEN ? ELSE published_at END`);
+        if (update.newPublishedAt === null) {
+          values.push(null);
+        } else {
+          values.push(update.newPublishedAt.toISOString());
+        }
+      }
+    });
+
+    query += cases.join(', ');
+    query += ` WHERE id IN (${ids.join(', ')})`;
+
+    console.log('Update query:', query);
+    console.log('Update values:', values);
+
+    await connection.query(query, values);
   } catch (error) {
-    console.error('Error updating publication:', error);
+    console.error('Error updating publications:', error);
     throw error;
   }
 }

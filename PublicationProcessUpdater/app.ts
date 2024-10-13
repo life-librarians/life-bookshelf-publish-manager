@@ -6,7 +6,7 @@ import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
 import { UpdatePublication } from './types';
-import { getAllMemberBookPublicationDetails, queryNotionDatabase, updatePublication } from './query';
+import { getAllMemberBookPublicationDetails, queryNotionDatabase, updatePublications } from './query';
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   let connection: mariadb.PoolConnection | null = null;
@@ -39,9 +39,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
             previousPublishedAt: publication.publishedAt,
           };
           newPublications.push(newPublication);
-
-          await updatePublication(connection, newPublication);
-          console.log(`Updated publication [${JSON.stringify(newPublication)}]`);
+          console.log(`Publication [${JSON.stringify(newPublication)}] Will be Updated ...`);
         }
       }
     }
@@ -52,6 +50,9 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
         body: JSON.stringify({ message: 'No publications to update' }),
       };
     }
+
+    await updatePublications(connection, newPublications);
+    console.log(`Successfully updated [${newPublications.length}] publications`);
 
     const webhook = new Webhook(discordConfig.webhookUrl as string);
 
