@@ -3,6 +3,7 @@ import { MemberBookPublication, NotionMemberBookPublication, UpdatePublication }
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { QueryDatabaseResponse } from '@notionhq/client/build/src/api-endpoints';
+import { stringToPublishStatus } from './utils';
 
 // ================= Start of Mariadb Query Functions =================
 export async function getAllMemberBookPublicationDetails(
@@ -14,6 +15,7 @@ export async function getAllMemberBookPublicationDetails(
         b.id AS book_id,
         mm.name AS member_name,
         m.email AS member_email,
+        dr.token AS device_token,
         b.title AS book_title,
         b.page AS book_pages,
         b.cover_image_url AS book_cover_image_url,
@@ -27,6 +29,8 @@ export async function getAllMemberBookPublicationDetails(
     JOIN
         lifebookshelf.members m ON mm.member_id = m.id
     JOIN
+        lifebookshelf.device_registries dr ON dr.member_id = m.id
+    JOIN
         lifebookshelf.books b ON b.member_id = m.id
     JOIN
         lifebookshelf.publications p ON p.book_id = b.id
@@ -39,6 +43,7 @@ export async function getAllMemberBookPublicationDetails(
       bookId: Number(row.book_id),
       memberName: row.member_name,
       memberEmail: row.member_email,
+      deviceToken: row.device_token,
       bookTitle: row.book_title,
       bookPageCount: row.book_pages,
       bookCoverImageUrl: row.book_cover_image_url,
@@ -129,7 +134,7 @@ export async function queryNotionDatabase(notion: Client): Promise<NotionMemberB
           ? new Date(properties['출판 요청일'].date.start)
           : null,
         willPublishedAt: properties['예상 출판일']?.date?.start ? new Date(properties['예상 출판일'].date.start) : null,
-        publishStatus: properties['출판 상태']?.select?.name ?? '',
+        publishStatus: stringToPublishStatus(properties['출판 상태']?.select?.name ?? ''),
         publishedAt: properties['출판일']?.date?.start ? new Date(properties['출판일'].date.start) : null,
       } as NotionMemberBookPublication;
     });

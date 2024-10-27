@@ -44,3 +44,12 @@ export interface NotionDatabaseProperties {
   '예상 출판일': { date: { start: string } };
   '출판 상태': { select: { name: string } };
 }
+
+export interface PublicationNotice {
+  publicationId: number;
+  memberName: string;
+  bookTitle: string;
+  bookCoverImageUrl: string;
+  publishStatus: PublishStatus;
+  deviceToken: string;
+}

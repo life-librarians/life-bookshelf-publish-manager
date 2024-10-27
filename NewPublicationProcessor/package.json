@@ -10,6 +10,7 @@
     "@notionhq/client": "^2.2.15",
     "discord-webhook-node": "^1.1.8",
     "esbuild": "^0.14.14",
+    "firebase-admin": "^12.7.0",
     "mariadb": "^3.2.3"
   },
   "scripts": {

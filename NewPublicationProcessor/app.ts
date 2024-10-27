@@ -1,12 +1,14 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import mariadb from 'mariadb';
-import { databaseConfig } from './config';
+import { awsS3BucketName, databaseConfig, firebaseAdminKey } from './config';
 import { discordConfig } from './config';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
-import { BookChapter, NotionDatabaseProperties, PublishStatus } from './types';
-import { getBookChaptersAndContents, getMemberBookPublicationDetails } from './query';
+import { BookChapter, NotionDatabaseProperties, PublicationNotice, PublishStatus } from './types';
+import { getBookChaptersAndContents, getDeviceTokens, getMemberBookPublicationDetails } from './query';
+import admin from 'firebase-admin';
+import { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
 
 function formatBookDetails(chapters: BookChapter[]): string {
   let resultString = 'Book Details:\n';
@@ -34,6 +36,50 @@ function publishStatusToKorean(status: PublishStatus): string {
     case PublishStatus.REJECTED:
       return '출판 반려';
   }
+}
+
+async function getFullImageUrl(objectKey: string): Promise<string | null> {
+  const s3Url = 's3.ap-northeast-2.amazonaws.com';
+  const bucketName = awsS3BucketName;
+  const url = `https://${s3Url}/${bucketName}/${objectKey}`;
+  try {
+    const response = await fetch(url, { method: 'HEAD' });
+    if (response.status === 200) {
+      return url; // Image exists and is accessible
+    }
+    return null; // Image does not exist or is not accessible
+  } catch (error) {
+    return null; // Network error or other issue
+  }
+}
+
+async function sendFCMPushNotification(publicationNotices: PublicationNotice[]): Promise<void> {
+  const decodedConfig = Buffer.from(firebaseAdminKey, 'base64').toString('utf8');
+  const config = JSON.parse(decodedConfig);
+
+  admin.initializeApp({
+    credential: admin.credential.cert(config),
+  });
+
+  const messages = await Promise.all(
+    publicationNotices.map(async (notice) => {
+      const imageUrl = await getFullImageUrl(notice.bookCoverImageUrl);
+      return {
+        notification: {
+          title: '출판 요청 접수 알림',
+          body: `${notice.memberName}님의 책 "${notice.bookTitle}"의 출판 요청이 접수되었습니다.`,
+          ...(imageUrl && { imageUrl }), // Include imageUrl only if it exists
+        },
+        token: notice.deviceToken,
+      };
+    }),
+  );
+
+  console.log('Sending messages:', messages);
+
+  const result = await admin.messaging().sendEach(messages);
+
+  console.log('Result:', result);
 }
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
@@ -89,26 +135,28 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       select: { name: publishStatusToKorean(memberBookPublicationDetail.publishStatus) },
     };
 
+    const splitContent = formattedBookDetails.match(/.{1,2000}/g) || [];
+    const children: BlockObjectRequest[] = splitContent.map((chunk) => ({
+      object: 'block' as const,
+      type: 'paragraph' as const,
+      paragraph: {
+        rich_text: [
+          {
+            type: 'text' as const,
+            text: {
+              content: chunk,
+            },
+          },
+        ],
+      },
+    }));
+
     const response = await notion.pages.create({
       parent: {
         database_id: databaseId,
       },
       properties,
-      children: [
-        {
-          object: 'block',
-          type: 'paragraph',
-          paragraph: {
-            rich_text: [
-              {
-                text: {
-                  content: formattedBookDetails,
-                },
-              },
-            ],
-          },
-        },
-      ],
+      children,
     });
 
     response.id;
@@ -126,7 +174,19 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       .setColor(0)
       .setTimestamp();
 
-    await webhook.send(message);
+    // await webhook.send(message);
+
+    const deviceTokens = await getDeviceTokens(connection, memberBookPublicationDetail.memberEmail);
+    const publicationNotices: PublicationNotice[] = deviceTokens.map((deviceToken) => ({
+      publicationId: memberBookPublicationDetail.publicationId,
+      memberName: memberBookPublicationDetail.memberName,
+      bookTitle: memberBookPublicationDetail.bookTitle,
+      bookCoverImageUrl: memberBookPublicationDetail.bookCoverImageUrl,
+      publishStatus: memberBookPublicationDetail.publishStatus,
+      deviceToken,
+    }));
+
+    await sendFCMPushNotification(publicationNotices);
 
     return {
       statusCode: 200,

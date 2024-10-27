@@ -26,6 +26,8 @@ export async function getMemberBookPublicationDetails(
     JOIN
         lifebookshelf.members m ON mm.member_id = m.id
     JOIN
+        lifebookshelf.device_registries dr ON dr.member_id = m.id
+    JOIN
         lifebookshelf.books b ON b.member_id = m.id
     JOIN
         lifebookshelf.publications p ON p.book_id = b.id
@@ -97,6 +99,23 @@ export async function getBookChaptersAndContents(
   });
 
   return Array.from(chaptersMap.values());
+}
+
+export async function getDeviceTokens(connection: mariadb.PoolConnection, memberEmail: string): Promise<string[]> {
+  const query = `
+    SELECT
+        dr.token AS device_token
+    FROM
+        lifebookshelf.members m
+    JOIN
+        lifebookshelf.device_registries dr ON dr.member_id = m.id
+    WHERE
+        m.email = ?
+`;
+
+  const rows = await connection.query(query, [memberEmail]);
+
+  return rows.map((row: any) => row.device_token);
 }
 
 // ================= End of Mariadb Query Functions =================

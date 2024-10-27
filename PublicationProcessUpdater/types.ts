@@ -11,6 +11,7 @@ export interface MemberBookPublication {
   bookId: number;
   memberName: string;
   memberEmail: string;
+  deviceToken: string;
   bookTitle: string;
   bookPageCount: number;
   bookCoverImageUrl: string;
@@ -65,4 +66,13 @@ export interface UpdatePublication {
   previousPublishedAt: Date | null;
   newPublishStatus: PublishStatus;
   newPublishedAt: Date | null;
+}
+
+export interface PublicationNotice {
+  publicationId: number;
+  memberName: string;
+  bookTitle: string;
+  bookCoverImageUrl: string;
+  publishStatus: PublishStatus;
+  deviceToken: string;
 }
