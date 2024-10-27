@@ -35,7 +35,9 @@ async function sendFCMPushNotification(publicationNotices: PublicationNotice[]):
 
   const messages = await Promise.all(
     publicationNotices.map(async (notice) => {
-      const imageUrl = await getFullImageUrl(notice.bookCoverImageUrl);
+      const imageUrl = notice.bookCoverImageUrl.includes('https://')
+        ? notice.bookCoverImageUrl
+        : await getFullImageUrl(notice.bookCoverImageUrl);
       return {
         notification: {
           ...getPushNotificationContent(notice.publishStatus),
@@ -46,7 +48,9 @@ async function sendFCMPushNotification(publicationNotices: PublicationNotice[]):
     }),
   );
 
-  admin.messaging().sendEach(messages);
+  console.log('Sending messages:', messages);
+  const response = await admin.messaging().sendEach(messages);
+  console.log('FCM response:', response);
 }
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
@@ -116,7 +120,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       .setColor(0)
       .setTimestamp();
 
-    await webhook.send(message);
+    // await webhook.send(message);
 
     return {
       statusCode: 200,

@@ -85,7 +85,7 @@ export async function updatePublications(
         if (update.newPublishedAt === null) {
           values.push(null);
         } else {
-          values.push(update.newPublishedAt.toISOString());
+          values.push(update.newPublishedAt);
         }
       }
     });
