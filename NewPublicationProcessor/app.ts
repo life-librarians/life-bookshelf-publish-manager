@@ -23,6 +23,11 @@ function formatBookDetails(chapters: BookChapter[]): string {
   return resultString;
 }
 
+// Function to split long content into chunks of 2000 characters
+function splitContentIntoChunks(content: string, chunkSize = 2000) {
+  return content.match(new RegExp(`.{1,${chunkSize}}`, 'g')) || [];
+}
+
 function publishStatusToKorean(status: PublishStatus): string {
   switch (status) {
     case PublishStatus.REQUESTED:
@@ -115,9 +120,8 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
     console.log(memberBookPublicationDetail);
 
     const bookChaptersAndContents = await getBookChaptersAndContents(connection, memberBookPublicationDetail.bookId);
+    console.log(bookChaptersAndContents);
     const formattedBookDetails = formatBookDetails(bookChaptersAndContents);
-
-    console.log(formattedBookDetails);
 
     const properties: Partial<NotionDatabaseProperties> = {};
     properties['출판 ID'] = { number: memberBookPublicationDetail.publicationId };
@@ -125,7 +129,9 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
     properties['고객 이메일'] = { email: memberBookPublicationDetail.memberEmail };
     properties['책 제목'] = { rich_text: [{ text: { content: memberBookPublicationDetail.bookTitle } }] };
     properties['페이지 수'] = { number: memberBookPublicationDetail.bookPageCount };
-    properties['책 커버 이미지 주소'] = { url: memberBookPublicationDetail.bookCoverImageUrl };
+    properties['책 커버 이미지 주소'] = {
+      url: (await getFullImageUrl(memberBookPublicationDetail.bookCoverImageUrl)) as string,
+    };
     properties['가격(원)'] = { number: memberBookPublicationDetail.publicationPrice };
     properties['출판 요청일'] = {
       date: { start: memberBookPublicationDetail.publicationRequestedAt.toISOString() },
@@ -135,22 +141,64 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       select: { name: publishStatusToKorean(memberBookPublicationDetail.publishStatus) },
     };
 
-    const splitContent = formattedBookDetails.match(/.{1,2000}/g) || [];
-    const children: BlockObjectRequest[] = splitContent.map((chunk) => ({
-      object: 'block' as const,
-      type: 'paragraph' as const,
-      paragraph: {
-        rich_text: [
-          {
-            type: 'text' as const,
-            text: {
-              content: chunk,
-            },
-          },
-        ],
-      },
-    }));
+    const children: BlockObjectRequest[] = [];
 
+    bookChaptersAndContents.forEach((chapter) => {
+      // Add Chapter title as H1
+      children.push({
+        object: 'block',
+        type: 'heading_1',
+        heading_1: {
+          rich_text: [
+            {
+              type: 'text',
+              text: {
+                content: `Chapter ${chapter.chapterNumber}: ${chapter.chapterName}`,
+              },
+            },
+          ],
+        },
+      });
+
+      chapter.contents.forEach((content) => {
+        // Add Page title as H2
+        children.push({
+          object: 'block',
+          type: 'heading_2',
+          heading_2: {
+            rich_text: [
+              {
+                type: 'text',
+                text: {
+                  content: `Page ${content.pageNumber}`,
+                },
+              },
+            ],
+          },
+        });
+
+        // Split page content into 2000-character chunks and add as paragraph blocks
+        const chunks = splitContentIntoChunks(content.pageContent);
+        chunks.forEach((chunk) => {
+          children.push({
+            object: 'block',
+            type: 'paragraph',
+            paragraph: {
+              rich_text: [
+                {
+                  type: 'text',
+                  text: {
+                    content: chunk,
+                  },
+                },
+              ],
+            },
+          });
+        });
+      });
+    });
+
+    // Send to Notion API
     const response = await notion.pages.create({
       parent: {
         database_id: databaseId,
@@ -158,8 +206,6 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       properties,
       children,
     });
-
-    response.id;
 
     const webhook = new Webhook(discordConfig.webhookUrl as string);
 
