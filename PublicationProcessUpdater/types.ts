@@ -9,6 +9,7 @@ export enum PublishStatus {
 export interface MemberBookPublication {
   publicationId: number;
   bookId: number;
+  memberId: number;
   memberName: string;
   memberEmail: string;
   deviceToken: string;
@@ -70,9 +71,16 @@ export interface UpdatePublication {
 
 export interface PublicationNotice {
   publicationId: number;
+  memberId: number;
   memberName: string;
   bookTitle: string;
   bookCoverImageUrl: string;
   publishStatus: PublishStatus;
   deviceToken: string;
+}
+
+export interface NoticeHistoryRequest {
+  memberId: number;
+  title: string;
+  content: string;
 }

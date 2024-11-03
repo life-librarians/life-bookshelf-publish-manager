@@ -5,8 +5,13 @@ import { discordConfig } from './config';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
-import { PublicationNotice, UpdatePublication } from './types';
-import { getAllMemberBookPublicationDetails, queryNotionDatabase, updatePublications } from './query';
+import { NoticeHistoryRequest, NotionMemberBookPublication, PublicationNotice, UpdatePublication } from './types';
+import {
+  addNoticeHistories,
+  getAllMemberBookPublicationDetails,
+  queryNotionDatabase,
+  updatePublications,
+} from './query';
 import admin from 'firebase-admin';
 import { getPushNotificationContent } from './utils';
 
@@ -25,7 +30,28 @@ async function getFullImageUrl(objectKey: string): Promise<string | null> {
   }
 }
 
-async function sendFCMPushNotification(publicationNotices: PublicationNotice[]): Promise<void> {
+async function sendWebhook(
+  newPublications: UpdatePublication[],
+  notionMemberBookPublicationDetails: NotionMemberBookPublication[],
+) {
+  try {
+    const webhook = new Webhook(discordConfig.webhookUrl as string);
+
+    const message = new MessageBuilder()
+      .setTitle('노션 데이터베이스 변경이 반영되었습니다')
+      .setDescription(`총 ${newPublications.length}개의 출판물이 처리되었습니다.`)
+      .addField('총 출판물 수', `${notionMemberBookPublicationDetails.length}개`)
+      .addField('변경된 출판물', '```' + JSON.stringify(newPublications, null, 2) + '```')
+      .setColor(0)
+      .setTimestamp();
+
+    await webhook.send(message);
+  } catch (error) {
+    console.error('Error sending webhook:', error);
+  }
+}
+
+async function sendFCMPushNotification(publicationNotices: PublicationNotice[]): Promise<NoticeHistoryRequest[]> {
   const decodedConfig = Buffer.from(firebaseAdminKey, 'base64').toString('utf8');
   const config = JSON.parse(decodedConfig);
 
@@ -33,24 +59,37 @@ async function sendFCMPushNotification(publicationNotices: PublicationNotice[]):
     credential: admin.credential.cert(config),
   });
 
+  const noticeHistories: NoticeHistoryRequest[] = [];
+
   const messages = await Promise.all(
     publicationNotices.map(async (notice) => {
       const imageUrl = notice.bookCoverImageUrl.includes('https://')
         ? notice.bookCoverImageUrl
         : await getFullImageUrl(notice.bookCoverImageUrl);
-      return {
+
+      const { title, body: content } = getPushNotificationContent(notice.publishStatus);
+      const message = {
         notification: {
-          ...getPushNotificationContent(notice.publishStatus),
+          title,
+          body: content,
           ...(imageUrl && { imageUrl }), // Include imageUrl only if it exists
         },
         token: notice.deviceToken,
       };
+      noticeHistories.push({
+        memberId: notice.memberId,
+        title,
+        content,
+      });
+      return message;
     }),
   );
 
   console.log('Sending messages:', messages);
   const response = await admin.messaging().sendEach(messages);
   console.log('FCM response:', response);
+
+  return noticeHistories;
 }
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
@@ -60,6 +99,8 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
     const pool = mariadb.createPool(databaseConfig);
     connection = await pool.getConnection();
 
+    // ========= BEGIN TRANSACTION =========
+    connection.beginTransaction();
     const memberBookPublicationDetails = await getAllMemberBookPublicationDetails(connection);
 
     const notion = new Client({ auth: notionConfig.apiKey });
@@ -87,6 +128,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
           newPublications.push(newPublication);
           publicationNotices.push({
             publicationId: notionPublication.publicationId,
+            memberId: publication.memberId,
             memberName: notionPublication.memberName,
             bookTitle: notionPublication.bookTitle,
             bookCoverImageUrl: notionPublication.bookCoverImageUrl,
@@ -108,19 +150,18 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
     await updatePublications(connection, newPublications);
     console.log(`Successfully updated [${newPublications.length}] publications`);
 
-    await sendFCMPushNotification(publicationNotices);
+    const noticeHistories = await sendFCMPushNotification(publicationNotices);
+    await connection.commit();
+    // ========= END TRANSACTION =========
 
-    const webhook = new Webhook(discordConfig.webhookUrl as string);
+    await sendWebhook(newPublications, notionMemberBookPublicationDetails);
 
-    const message = new MessageBuilder()
-      .setTitle('노션 데이터베이스 변경이 반영되었습니다')
-      .setDescription(`총 ${newPublications.length}개의 출판물이 처리되었습니다.`)
-      .addField('총 출판물 수', `${notionMemberBookPublicationDetails.length}개`)
-      .addField('변경된 출판물', '```' + JSON.stringify(newPublications, null, 2) + '```')
-      .setColor(0)
-      .setTimestamp();
-
-    await webhook.send(message);
+    try {
+      await addNoticeHistories(connection, noticeHistories);
+      console.log('Notice history added successfully');
+    } catch (error) {
+      console.error('Error adding notice history:', error);
+    }
 
     return {
       statusCode: 200,

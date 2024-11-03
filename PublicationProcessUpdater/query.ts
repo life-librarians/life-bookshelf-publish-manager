@@ -1,5 +1,5 @@
 import mariadb from 'mariadb';
-import { MemberBookPublication, NotionMemberBookPublication, UpdatePublication } from './types';
+import { MemberBookPublication, NoticeHistoryRequest, NotionMemberBookPublication, UpdatePublication } from './types';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { QueryDatabaseResponse } from '@notionhq/client/build/src/api-endpoints';
@@ -13,6 +13,7 @@ export async function getAllMemberBookPublicationDetails(
     SELECT
         p.id AS publication_id,
         b.id AS book_id,
+        m.id AS member_id,
         mm.name AS member_name,
         m.email AS member_email,
         dr.token AS device_token,
@@ -41,6 +42,7 @@ export async function getAllMemberBookPublicationDetails(
     return {
       publicationId: Number(row.publication_id),
       bookId: Number(row.book_id),
+      memberId: Number(row.member_id),
       memberName: row.member_name,
       memberEmail: row.member_email,
       deviceToken: row.device_token,
@@ -99,6 +101,35 @@ export async function updatePublications(
     await connection.query(query, values);
   } catch (error) {
     console.error('Error updating publications:', error);
+    throw error;
+  }
+}
+
+export async function addNoticeHistories(
+  connection: mariadb.PoolConnection,
+  NoticeHistoryRequests: NoticeHistoryRequest[],
+): Promise<void> {
+  const query = `
+    INSERT INTO lifebookshelf.notice_histories (title, content, received_at, is_read, member_id)
+    VALUES ${NoticeHistoryRequests.map(() => '(?, ?, ?, ?, ?)').join(', ')}
+  `;
+
+  const receivedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const isRead = false;
+
+  // 모든 요청 데이터를 하나의 배열로 평탄화 (flatten)하여 전달
+  const parameters = NoticeHistoryRequests.flatMap((noticeHistoryRequest) => [
+    noticeHistoryRequest.title,
+    noticeHistoryRequest.content,
+    receivedAt,
+    isRead,
+    noticeHistoryRequest.memberId,
+  ]);
+
+  try {
+    await connection.query(query, parameters);
+  } catch (error) {
+    console.error('Error adding notice histories:', error);
     throw error;
   }
 }
