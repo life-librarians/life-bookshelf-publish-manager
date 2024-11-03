@@ -1,7 +1,5 @@
 import mariadb from 'mariadb';
-import { BookChapter, BookContent, MemberBookPublication } from './types';
-import { notionConfig } from './config';
-import { Client } from '@notionhq/client';
+import { BookChapter, BookContent, MemberBookPublication, NoticeHistoryRequest } from './types';
 
 // ================= Start of Mariadb Query Functions =================
 export async function getMemberBookPublicationDetails(
@@ -12,6 +10,7 @@ export async function getMemberBookPublicationDetails(
     SELECT
         b.id AS book_id,
         mm.name AS member_name,
+        m.id AS member_id,
         m.email AS member_email,
         b.title AS book_title,
         b.page AS book_pages,
@@ -46,6 +45,7 @@ export async function getMemberBookPublicationDetails(
   return {
     publicationId: Number(publicationId),
     bookId: Number(row.book_id),
+    memberId: Number(row.member_id),
     memberName: row.member_name,
     memberEmail: row.member_email,
     bookTitle: row.book_title,
@@ -58,6 +58,7 @@ export async function getMemberBookPublicationDetails(
     publishedAt: row.published_at ? new Date(row.published_at) : null,
   };
 }
+
 export async function getBookChaptersAndContents(
   connection: mariadb.PoolConnection,
   bookId: number,
@@ -116,6 +117,27 @@ export async function getDeviceTokens(connection: mariadb.PoolConnection, member
   const rows = await connection.query(query, [memberEmail]);
 
   return rows.map((row: any) => row.device_token);
+}
+
+export async function addNoticeHistory(
+  connection: mariadb.PoolConnection,
+  noticeHistoryRequest: NoticeHistoryRequest,
+): Promise<void> {
+  const query = `
+    INSERT INTO lifebookshelf.notice_histories (title, content, received_at, is_read, member_id)
+    VALUES (?, ?, ?, ?, ?)
+`;
+
+  const receivedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const isRead = false;
+
+  await connection.query(query, [
+    noticeHistoryRequest.title,
+    noticeHistoryRequest.content,
+    receivedAt,
+    isRead,
+    noticeHistoryRequest.memberId,
+  ]);
 }
 
 // ================= End of Mariadb Query Functions =================
