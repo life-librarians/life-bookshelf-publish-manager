@@ -120,7 +120,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       .setColor(0)
       .setTimestamp();
 
-    // await webhook.send(message);
+    await webhook.send(message);
 
     return {
       statusCode: 200,

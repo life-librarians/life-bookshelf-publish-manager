@@ -1,61 +1,20 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import mariadb from 'mariadb';
-import { awsS3BucketName, databaseConfig, firebaseAdminKey } from './config';
+import { databaseConfig, firebaseAdminKey } from './config';
 import { discordConfig } from './config';
 import { notionConfig } from './config';
 import { Client } from '@notionhq/client';
 import { Webhook, MessageBuilder } from 'discord-webhook-node';
-import { BookChapter, NotionDatabaseProperties, PublicationNotice, PublishStatus } from './types';
+import { NotionDatabaseProperties, PublicationNotice, PublishStatus } from './types';
 import { getBookChaptersAndContents, getDeviceTokens, getMemberBookPublicationDetails } from './query';
 import admin from 'firebase-admin';
 import { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
-
-function formatBookDetails(chapters: BookChapter[]): string {
-  let resultString = 'Book Details:\n';
-
-  chapters.forEach((chapter) => {
-    resultString += `\nChapter ${chapter.chapterNumber}: ${chapter.chapterName}\n`;
-    chapter.contents.forEach((content) => {
-      resultString += `  Page ${content.pageNumber}: ${content.pageContent}\n`;
-    });
-  });
-
-  return resultString;
-}
+import { getFullImageUrl, publishStatusToKorean } from './utils';
+import { sendEmail } from './mailer';
 
 // Function to split long content into chunks of 2000 characters
 function splitContentIntoChunks(content: string, chunkSize = 2000) {
   return content.match(new RegExp(`.{1,${chunkSize}}`, 'g')) || [];
-}
-
-function publishStatusToKorean(status: PublishStatus): string {
-  switch (status) {
-    case PublishStatus.REQUESTED:
-      return '새 요청';
-    case PublishStatus.REQUEST_CONFIRMED:
-      return '요청 처리중';
-    case PublishStatus.IN_PUBLISHING:
-      return '출판 중';
-    case PublishStatus.PUBLISHED:
-      return '출판 완료';
-    case PublishStatus.REJECTED:
-      return '출판 반려';
-  }
-}
-
-async function getFullImageUrl(objectKey: string): Promise<string | null> {
-  const s3Url = 's3.ap-northeast-2.amazonaws.com';
-  const bucketName = awsS3BucketName;
-  const url = `https://${s3Url}/${bucketName}/${objectKey}`;
-  try {
-    const response = await fetch(url, { method: 'HEAD' });
-    if (response.status === 200) {
-      return url; // Image exists and is accessible
-    }
-    return null; // Image does not exist or is not accessible
-  } catch (error) {
-    return null; // Network error or other issue
-  }
 }
 
 async function sendFCMPushNotification(publicationNotices: PublicationNotice[]): Promise<void> {
@@ -121,7 +80,6 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
 
     const bookChaptersAndContents = await getBookChaptersAndContents(connection, memberBookPublicationDetail.bookId);
     console.log(bookChaptersAndContents);
-    const formattedBookDetails = formatBookDetails(bookChaptersAndContents);
 
     const properties: Partial<NotionDatabaseProperties> = {};
     properties['출판 ID'] = { number: memberBookPublicationDetail.publicationId };
@@ -220,7 +178,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       .setColor(0)
       .setTimestamp();
 
-    // await webhook.send(message);
+    await webhook.send(message);
 
     const deviceTokens = await getDeviceTokens(connection, memberBookPublicationDetail.memberEmail);
     const publicationNotices: PublicationNotice[] = deviceTokens.map((deviceToken) => ({
@@ -233,6 +191,8 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
     }));
 
     await sendFCMPushNotification(publicationNotices);
+
+    await sendEmail(memberBookPublicationDetail);
 
     return {
       statusCode: 200,

@@ -15,6 +15,13 @@ export const notionConfig = {
   databaseId: process.env.NOTION_DATABASE_ID as string,
 };
 
+export const emailConfig = {
+  service: process.env.EMAIL_SERVICE,
+  user: process.env.EMAIL_USER,
+  pass: process.env.EMAIL_PASS,
+  receviver: process.env.EMAIL_RECEIVER,
+};
+
 export const firebaseAdminKey = process.env.FIREBASE_ADMIN_KEY as string;
 
 export const awsS3BucketName = process.env.AWS_S3_BUCKET_NAME as string;
