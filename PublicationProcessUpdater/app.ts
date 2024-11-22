@@ -13,7 +13,7 @@ import {
   updatePublications,
 } from './query';
 import admin from 'firebase-admin';
-import { getPushNotificationContent } from './utils';
+import { areDatesDifferent, getPushNotificationContent } from './utils';
 
 async function getFullImageUrl(objectKey: string): Promise<string | null> {
   const s3Url = 's3.ap-northeast-2.amazonaws.com';
@@ -116,7 +116,7 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
       if (publication) {
         if (
           publication.publishStatus !== notionPublication.publishStatus ||
-          publication.publishedAt !== notionPublication.publishedAt
+          areDatesDifferent(publication.publishedAt, notionPublication.publishedAt)
         ) {
           const newPublication: UpdatePublication = {
             publicationId: notionPublication.publicationId,

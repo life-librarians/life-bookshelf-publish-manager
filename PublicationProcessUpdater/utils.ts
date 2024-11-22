@@ -63,3 +63,15 @@ export function getPushNotificationContent(status: PublishStatus): { title: stri
       throw new Error(`Unknown publish status: ${status}`);
   }
 }
+
+export function areDatesDifferent(date1: Date | null, date2: Date | null): boolean {
+  if (date1 === date2) {
+    return false; // 둘 다 null이거나 같은 객체
+  }
+
+  if (date1 === null || date2 === null) {
+    return true; // 하나만 null인 경우
+  }
+
+  return date1.getTime() !== date2.getTime(); // 날짜 값 비교
+}
