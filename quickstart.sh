@@ -23,6 +23,11 @@ elif [ "$1" == "updatePublication" ]; then
     echo -e $GREEN "출간물 수정을 처리합니다." $RESET
     sam local invoke UpdatePublicationProcessorFunction --event events/event.json \
         --template .aws-sam/build/template.yaml
+        # 탈퇴 회원 처리
+elif [ "$1" == "withdrawal" ]; then
+    echo -e $GREEN "탈퇴 회원 처리를 합니다." $RESET
+    sam local invoke WithdrawalProcessorFunction --event events/event.json \
+        --template .aws-sam/build/template.yaml
 else
     echo -e $RED "잘못된 명령어입니다." $RESET
 fi
