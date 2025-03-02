@@ -28,7 +28,12 @@ function splitContentIntoChunks(content: string, chunkSize = 2000) {
   return content.match(new RegExp(`.{1,${chunkSize}}`, 'g')) || [];
 }
 
-async function sendFCMPushNotification(publicationNotices: PublicationNotice[]): Promise<NoticeHistoryRequest> {
+async function sendFCMPushNotification(publicationNotices: PublicationNotice[]): Promise<NoticeHistoryRequest | null> {
+  if (publicationNotices.length === 0) {
+    console.log('No publication notices to send.');
+    return null;
+  }
+
   const decodedConfig = Buffer.from(firebaseAdminKey, 'base64').toString('utf8');
   const config = JSON.parse(decodedConfig);
 
@@ -39,8 +44,15 @@ async function sendFCMPushNotification(publicationNotices: PublicationNotice[]):
   const title = '출판 요청 접수 알림';
   const body = `${publicationNotices[0].memberName}님의 책 "${publicationNotices[0].bookTitle}"의 출판 요청이 접수되었습니다.`;
 
+  const validNotices = publicationNotices.filter((notice) => notice.deviceToken); // deviceToken이 존재하는 경우만 처리
+
+  if (validNotices.length === 0) {
+    console.log('No valid device tokens found.');
+    return null;
+  }
+
   const messages = await Promise.all(
-    publicationNotices.map(async (notice) => {
+    validNotices.map(async (notice) => {
       const imageUrl = await getFullImageUrl(notice.bookCoverImageUrl);
       return {
         notification: {
@@ -48,12 +60,12 @@ async function sendFCMPushNotification(publicationNotices: PublicationNotice[]):
           body,
           ...(imageUrl && { imageUrl }), // Include imageUrl only if it exists
         },
-        token: notice.deviceToken,
+        token: notice.deviceToken!,
       };
     }),
   );
-  console.log('Sending messages:', messages);
 
+  console.log('Sending messages:', messages);
   const result = await admin.messaging().sendEach(messages);
   console.log('Result:', result);
 
@@ -233,7 +245,9 @@ export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGat
 
     const noticeHistoryRequest = await sendFCMPushNotification(publicationNotices);
     try {
-      await addNoticeHistory(connection, noticeHistoryRequest);
+      if (noticeHistoryRequest) {
+        await addNoticeHistory(connection, noticeHistoryRequest);
+      }
       console.log('Notice history added successfully');
     } catch (error) {
       console.error('Error adding notice history:', error);

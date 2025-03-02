@@ -62,28 +62,35 @@ async function sendFCMPushNotification(publicationNotices: PublicationNotice[]):
   const noticeHistories: NoticeHistoryRequest[] = [];
 
   const messages = await Promise.all(
-    publicationNotices.map(async (notice) => {
-      const imageUrl = notice.bookCoverImageUrl.includes('https://')
-        ? notice.bookCoverImageUrl
-        : await getFullImageUrl(notice.bookCoverImageUrl);
+    publicationNotices
+      .filter((notice) => notice.deviceToken) // deviceToken이 존재하는 경우만 처리
+      .map(async (notice) => {
+        const imageUrl = notice.bookCoverImageUrl.includes('https://')
+          ? notice.bookCoverImageUrl
+          : await getFullImageUrl(notice.bookCoverImageUrl);
 
-      const { title, body: content } = getPushNotificationContent(notice.publishStatus);
-      const message = {
-        notification: {
+        const { title, body: content } = getPushNotificationContent(notice.publishStatus);
+        const message = {
+          notification: {
+            title,
+            body: content,
+            ...(imageUrl && { imageUrl }), // Include imageUrl only if it exists
+          },
+          token: notice.deviceToken,
+        };
+        noticeHistories.push({
+          memberId: notice.memberId,
           title,
-          body: content,
-          ...(imageUrl && { imageUrl }), // Include imageUrl only if it exists
-        },
-        token: notice.deviceToken,
-      };
-      noticeHistories.push({
-        memberId: notice.memberId,
-        title,
-        content,
-      });
-      return message;
-    }),
+          content,
+        });
+        return message;
+      }),
   );
+
+  if (messages.length === 0) {
+    console.log('No valid messages to send.');
+    return noticeHistories;
+  }
 
   console.log('Sending messages:', messages);
   const response = await admin.messaging().sendEach(messages);
