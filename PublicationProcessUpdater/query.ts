@@ -29,7 +29,7 @@ export async function getAllMemberBookPublicationDetails(
         lifebookshelf.member_metadatas mm
     JOIN
         lifebookshelf.members m ON mm.member_id = m.id
-    JOIN
+    LEFT JOIN
         lifebookshelf.device_registries dr ON dr.member_id = m.id
     JOIN
         lifebookshelf.books b ON b.member_id = m.id
